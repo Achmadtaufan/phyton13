@@ -1,0 +1,205 @@
+                                            
+IF OBJECT_ID('TEMPDB.DBO.#TEMP_ZSUNPF') IS NOT NULL                                                    
+DROP TABLE #TEMP_ZSUNPF                                                    
+                                                    
+IF OBJECT_ID('TEMPDB.DBO.#TEMP_FINAL_ZSUNPF') IS NOT NULL                                                    
+DROP TABLE #TEMP_FINAL_ZSUNPF                                           
+                                          
+IF OBJECT_ID('TEMPDB.DBO.#STAT_MASTER') IS NOT NULL                                                    
+DROP TABLE #STAT_MASTER                                           
+                                          
+IF OBJECT_ID('TEMPDB.DBO.#FINAL_TEMP') IS NOT NULL                                                    
+DROP TABLE #FINAL_TEMP        
+      
+--INSERT INTO DBREPORT..REPORT_SUSPENDBENEFIT_HISTORY    
+--SELECT * FROM DBREPORT..REPORT_SUSPENDBENEFIT    
+    
+--DELETE FROM DBREPORT..REPORT_SUSPENDBENEFIT_HISTORY    
+--WHERE LEFT(DATE_NOW,7) < LEFT(CONVERT(DATE,DATEADD(MONTH,-3,GETDATE())),7)    
+    
+    
+--TRUNCATE TABLE DBREPORT..REPORT_SUSPENDBENEFIT      
+                                          
+                                          
+DECLARE @PERIODE VARCHAR(7)                                              
+SELECT @PERIODE = REPLACE(CAST(CONVERT(DATE,DATEADD(MONTH,-1,GETDATE())) AS VARCHAR(7)),'-','')                            
+                          
+                               
+SELECT LEFT(Z.RLDGACCT,8) RLDGACCT, Z.SACSCODE, Z.SACSTYP, Z.ORIGCURR , ACCTAMT, ORIGAMT, EFFDATE, X.BENEFIT, Z.GLSIGN                                                   
+INTO #TEMP_ZSUNPF                                                   
+FROM STG..STG_ZSUNPF Z                                                   
+INNER JOIN STG..RPT_SACSCODE_TYPE_SUSPENSEBENEFIT X ON Z.SACSCODE+Z.SACSTYP = X.SACSCODE+X.SACSTYPE                                                               
+WHERE CONCAT(BATCACTYR,CASE WHEN LEN(BATCACTMN) = 1 THEN '0'+BATCACTMN ELSE BATCACTMN END) <= @PERIODE                          
+--AND LEFT(Z.RLDGACCT,8) = 'C0083955'                          
+--AND Z.SACSCODE+Z.SACSTYP = 'LNEO'                          
+        
+                                       
+SELECT A.RLDGACCT, A.SACSCODE, A.SACSTYP ,MIN(CONVERT(DATE,A.EFFDATE)) AS DATIME,                                     
+SUM(CASE WHEN A.GLSIGN='-' THEN A.ACCTAMT*-1 ELSE A.ACCTAMT END) AS ACCTAMT,                                   
+SUM(CASE WHEN A.GLSIGN='-' THEN A.ORIGAMT*-1 ELSE A.ORIGAMT END) AS ORIGAMT,                             
+A.ORIGCURR,                            
+A.BENEFIT                                                         
+INTO #TEMP_FINAL_ZSUNPF                                       
+FROM #TEMP_ZSUNPF A                 
+GROUP BY A.RLDGACCT, A.SACSCODE, A.SACSTYP, A.BENEFIT , A.ORIGCURR                                          
+HAVING SUM(CASE WHEN A.GLSIGN='-' THEN A.ORIGAMT*-1 ELSE A.ORIGAMT END)<> 0                            
+                               
+                                       
+SELECT CHDRNUM,STATCODE, [VERSION]                                           
+INTO #STAT_MASTER                                     
+FROM LF_ULMASTER                                          
+WHERE [VERSION] = @PERIODE                                    
+--AND CHDRNUM = 'C0083955'                                    
+UNION                                          
+SELECT CHDRNUM,STATCODE, VERSION FROM LF_TRADMASTER                                          
+WHERE [VERSION] = @PERIODE                                      
+--AND CHDRNUM = 'C0083955'            
+        
+        
+        
+ SELECT DISTINCT * 
+ INTO #FINAL_TEMP 
+ FROM                                                   
+(SELECT DISTINCT --TOP 100                                                    
+POL.COMPANY_CODE SOB,                                                    
+POL.POLICY_NUMBER CHDRNUM,            
+POL.PRODUCT_CODE CNTYTYPE,                                                    
+POL.PRODUCT_NAME PRODUCT_NAME,                                                    
+POL.CURRENCY,                                                    
+POL.INSTALLMENTPREMIUM_NETT PREMIUM,                                                    
+EQ_IDR = POL.INSTALLMENTPREMIUM_NETT*RT.BUYRATE,                                                    
+POL.PREMIUM_STATUS,                                           
+POL.SERVICINGAGENT_ID,                                                    
+AG.AGENT_NAME,                                                    
+LF.TITLE AS SALUTATION,                                                    
+LTRIM(RTRIM(LF.FIRST_NAME+' '+LF.MIDDLE_NAME+' '+LF.SURNAME)) AS POLICYHOLDER_NAME,                             
+POL.CLIENT_ID,                                                    
+LF.MAILING AS PHOLDER_EMAIL,                                                    
+LF.MOBILENO AS PHOLDER_PHONENUMBER,                                                    
+DA.ADDRESS AS PHOLDER_DESPATCH_ADDRESS,                                                    
+AG.EMAIL_ADDRESS AS AGENT_EMAIL,                                                    
+AG.SALESOFFICE_ID AS BRANCH_CODE,                                                    
+BRANCH_NAME = SALESOFFICE_NAME,                                                    
+CAST(CONVERT(VARCHAR,POL.PAIDTODATE) AS DATE) AS PAIDTODATE,                                                    
+VALIDFLAG = '1',                                                    
+--POL.POLICY_STATUS AS STATCODE,                                                    
+Z.SACSCODE,                                                    
+Z.SACSTYP,                            
+Z.ORIGCURR,                            
+SACSCURBAL = Z.ORIGAMT,                                              
+DATIME =CASE WHEN AB.SUB_ACCOUNT_CODE+AB.SUB_ACCOUNT_TYPE IN ('LPEZ','LNEO','LNEI') THEN AB.DATIME ELSE Z.DATIME END,                                                    
+DATE_NOW = EOMONTH(DATEADD(MONTH,-1,GETDATE())),                                                    
+POL.CHANNEL_CODE AS CHNDIST,                                              
+DAYS = DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())),                                                    
+ --case                                                                                
+ -- when  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112))) <= 30 then '< 30 Days'                                                                                
+ -- when  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112))) between 31 and  60 then '31-60 Days'                                                                     
+
+  
+    
+     
+        
+           
+           
+ -- when  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112))) > 60                                                             
+ --  and  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112)))  <= 90 then '61-90 Days'                                                                                 
+
+ -- when  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112))) > 90                                                                 
+ --  and  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112))) <= 180  then '91-180 Days'                                                                               
+
+ 
+ -- when  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112))) > 180                                                                 
+ --  and  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112)))  <= 365  then '181-365 Days'                     
+ -- when  datediff(day,CONVERT(dATE,CONVERT(VARCHAR(10),Z.datime,112)), CONVERT(DATE,CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112))) > 365 then '> 365 Days'                                                                                
+ --end as OS,                                                    
+[< 30 DAYS] = CASE WHEN DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())) < 30 THEN Z.ORIGAMT ELSE NULL END,                                                    
+[31-60 DAYS] = CASE WHEN DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())) BETWEEN 31 AND 60 THEN Z.ORIGAMT ELSE NULL END,                                                    
+[61-90 DAYS] = CASE WHEN DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())) BETWEEN 61 AND 90 THEN Z.ORIGAMT ELSE NULL END,                                                    
+[91-180 DAYS] = CASE WHEN DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())) BETWEEN 91 AND 180 THEN Z.ORIGAMT ELSE NULL END,                                                    
+[181-365 DAYS] = CASE WHEN DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())) BETWEEN 181 AND 365 THEN Z.ORIGAMT ELSE NULL END,                          
+[> 365 DAYS] = CASE WHEN DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())) > 365 THEN Z.ORIGAMT ELSE NULL END,                                                    
+BENEFIT_TYPE = Z.BENEFIT,              
+AB.AMOUNT AS CURRENT_SUSPEND_AMOUNT,              
+GETDATE() AS UPDATED_DATE ,
+[DESCRIPTION]=SBD.BENEFIT_DETAIL
+                                         
+FROM TR_POLICY POL (NOLOCK)                                                    
+INNER JOIN #TEMP_FINAL_ZSUNPF Z ON POL.POLICY_NUMBER = Z.RLDGACCT                                                    
+LEFT JOIN LF_CLIENT LF (NOLOCK) ON POL.CLIENT_ID = LF.CLIENT_ID                                                    
+LEFT JOIN v_DIM_AGENT AG (NOLOCK) ON POL.SERVICINGAGENT_ID = AG.AGENT_ID                                                    
+LEFT JOIN LF_CLIENT DA (NOLOCK) ON POL.DESPATCH_ID = DA.CLIENT_ID                       
+LEFT JOIN LF_EXCHANGERATE AS RT ON POL.CURRENCY = RT.FROM_CURR AND RT.STARTDATE = CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112)          
+LEFT JOIN LF_SUBACCBALANCE AB (NOLOCK) ON Z.RLDGACCT = LEFT(AB.POLICY_NUMBER,8) AND Z.SACSCODE+Z.SACSTYP = AB.SUB_ACCOUNT_CODE+AB.SUB_ACCOUNT_TYPE
+LEFT JOIN STG..RPT_SACSCODE_TYPE_SUSPENSEBENEFIT_UAT SBD ON (SBD.SACSCODE+SBD.SACSTYPE)=(AB.SUB_ACCOUNT_CODE+AB.SUB_ACCOUNT_TYPE)
+GROUP BY POL.COMPANY_CODE, POL.POLICY_NUMBER,POL.PRODUCT_CODE,                                   
+POL.PRODUCT_NAME,POL.CURRENCY,POL.INSTALLMENTPREMIUM_NETT, POL.PREMIUM_STATUS,                                                     
+POL.SERVICINGAGENT_ID, AG.AGENT_NAME,LF.TITLE, LTRIM(RTRIM(LF.FIRST_NAME+' '+LF.MIDDLE_NAME+' '+LF.SURNAME)),                                 
+POL.CLIENT_ID, LF.MAILING, LF.MOBILENO, DA.ADDRESS,AG.EMAIL_ADDRESS,                                                    
+AG.SALESOFFICE_ID, SALESOFFICE_NAME,CAST(CONVERT(VARCHAR,POL.PAIDTODATE) AS DATE),POL.POLICY_STATUS,                                        
+Z.SACSCODE,Z.SACSTYP, Z.DATIME, POL.CHANNEL_CODE,POL.INSTALLMENTPREMIUM_NETT*RT.BUYRATE, Z.BENEFIT, Z.ORIGCURR, ORIGAMT,AB.AMOUNT               
+--) FINAL                                                    
+--pivot(SUM([SACSCURBAL]) FOR OS IN ( [< 30 Days],[31-60 Days],[61-90 Days],[91-180 Days],[181-365 Days],[> 365 Days]))PVT                                            
+
+UNION ALL
+
+SELECT DISTINCT --TOP 100                                                      
+POL.COMPANY_CODE SOB,                                                      
+POL.POLICY_NUMBER CHDRNUM,              
+POL.PRODUCT_CODE CNTYTYPE,                                                      
+POL.PRODUCT_NAME PRODUCT_NAME,                                                      
+POL.CURRENCY,                                                      
+POL.INSTALLMENTPREMIUM_NETT PREMIUM,                                                      
+EQ_IDR = POL.INSTALLMENTPREMIUM_NETT*RT.BUYRATE,                                                      
+POL.PREMIUM_STATUS,                                             
+POL.SERVICINGAGENT_ID,                                                      
+AG.AGENT_NAME,                                                      
+LF.TITLE AS SALUTATION,                                                      
+LTRIM(RTRIM(LF.FIRST_NAME+' '+LF.MIDDLE_NAME+' '+LF.SURNAME)) AS POLICYHOLDER_NAME,                               
+POL.CLIENT_ID,                                                      
+LF.MAILING AS PHOLDER_EMAIL,                                                      
+LF.MOBILENO AS PHOLDER_PHONENUMBER,                                                      
+DA.ADDRESS AS PHOLDER_DESPATCH_ADDRESS,                                                      
+AG.EMAIL_ADDRESS AS AGENT_EMAIL,                                                      
+AG.SALESOFFICE_ID AS BRANCH_CODE,                                                      
+BRANCH_NAME = SALESOFFICE_NAME,                                                      
+CAST(CONVERT(VARCHAR,POL.PAIDTODATE) AS DATE) AS PAIDTODATE,                                                      
+VALIDFLAG = '1',                                                      
+--POL.POLICY_STATUS AS STATCODE,                                                      
+Z.SACSCODE,                                                      
+Z.SACSTYP,                              
+Z.ORIGCURR,                              
+SACSCURBAL = Z.ORIGAMT,                                                
+--DATIME = Z.DATIME,  
+DATIME = AB.DATIME,
+DATE_NOW = EOMONTH(DATEADD(MONTH,-1,GETDATE())),                                                      
+POL.CHANNEL_CODE AS CHNDIST,                                                
+DAYS = DATEDIFF(DAY,Z.DATIME,CONVERT(DATE,GETDATE())),                                                      
+[< 30 DAYS] = NULL,
+[31-60 DAYS] = NULL,
+[61-90 DAYS] = NULL,
+[91-180 DAYS] = NULL,
+[181-365 DAYS] = NULL,
+[> 365 DAYS] = NULL,
+BENEFIT_TYPE = Z.BENEFIT,                
+AB.AMOUNT AS CURRENT_SUSPEND_AMOUNT,
+GETDATE() AS UPDATED_DATE,
+[DESCRIPTION]=SBD.BENEFIT_DETAIL 
+--INTO #FINAL_TEMP                                            
+FROM TR_POLICY POL (NOLOCK)                                                      
+INNER JOIN (SELECT * FROM #TEMP_FINAL_ZSUNPF WHERE (SACSCODE+SACSTYP) IN ('LNAO','LNAI','LNLO','LNLI')) Z ON POL.POLICY_NUMBER = Z.RLDGACCT                                                      
+LEFT JOIN LF_CLIENT LF (NOLOCK) ON POL.CLIENT_ID = LF.CLIENT_ID                                                      
+LEFT JOIN v_DIM_AGENT AG (NOLOCK) ON POL.SERVICINGAGENT_ID = AG.AGENT_ID                                                      
+LEFT JOIN LF_CLIENT DA (NOLOCK) ON POL.DESPATCH_ID = DA.CLIENT_ID                         
+LEFT JOIN LF_EXCHANGERATE AS RT ON POL.CURRENCY = RT.FROM_CURR AND RT.STARTDATE = CONVERT(VARCHAR(8),EOMONTH(DATEADD(MONTH, -1, GETDATE())),112)            
+LEFT JOIN LF_SUBACCBALANCE_DEV_ACT AB (NOLOCK) ON Z.RLDGACCT = LEFT(AB.POLICY_NUMBER,8) AND Z.SACSCODE+Z.SACSTYP = AB.SUB_ACCOUNT_CODE+AB.SUB_ACCOUNT_TYPE
+--LEFT JOIN LF_SUBACCBALANCE AB (NOLOCK) ON Z.RLDGACCT = LEFT(AB.POLICY_NUMBER,8) AND Z.SACSCODE+Z.SACSTYP = AB.SUB_ACCOUNT_CODE+AB.SUB_ACCOUNT_TYPE   
+LEFT JOIN STG..RPT_SACSCODE_TYPE_SUSPENSEBENEFIT_UAT SBD ON (SBD.SACSCODE+SBD.SACSTYPE)=(AB.SUB_ACCOUNT_CODE+AB.SUB_ACCOUNT_TYPE)
+--GROUP BY POL.COMPANY_CODE, POL.POLICY_NUMBER,POL.PRODUCT_CODE,                                     
+--POL.PRODUCT_NAME,POL.CURRENCY,POL.INSTALLMENTPREMIUM_NETT, POL.PREMIUM_STATUS,                                                       
+--POL.SERVICINGAGENT_ID, AG.AGENT_NAME,LF.TITLE, LTRIM(RTRIM(LF.FIRST_NAME+' '+LF.MIDDLE_NAME+' '+LF.SURNAME)),                                   
+--POL.CLIENT_ID, LF.MAILING, LF.MOBILENO, DA.ADDRESS,AG.EMAIL_ADDRESS,                                                      
+--AG.SALESOFFICE_ID, SALESOFFICE_NAME,CAST(CONVERT(VARCHAR,POL.PAIDTODATE) AS DATE),POL.POLICY_STATUS,                                          
+--Z.SACSCODE,Z.SACSTYP, Z.DATIME,AB.DATIME, POL.CHANNEL_CODE,POL.INSTALLMENTPREMIUM_NETT*RT.BUYRATE, Z.BENEFIT, Z.ORIGCURR, ORIGAMT,AB.AMOUNT,SBD.BENEFIT_DETAIL                 
+--) FINAL                                                      
+--pivot(SUM([SACSCURBAL]) FOR OS IN ( [< 30 Days],[31-60 Days],[61-90 Days],[91-180 Days],[181-365 Days],[> 365 Days]))PVT                                              
+ )  A   
