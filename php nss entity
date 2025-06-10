@@ -1,0 +1,78 @@
+<?php
+include("inc_err.php");
+include("server_dwh.php");
+include("lib.php");
+session_start();
+include("auth.php");
+
+set_time_limit(60*10);
+$uploadby = $_SESSION["reporttools_userid"];
+$file_excel = $_FILES["file_excel"]["name"];
+
+if ($_FILES["file_excel"]["error"] == 0) {
+    $file_excel_tmp = $_FILES["file_excel"]["tmp_name"];
+    move_uploaded_file($file_excel_tmp, "uploads/$file_excel");
+    save_to_db("uploads/$file_excel");
+}
+
+function save_to_db($fname)
+{
+    global $myconn;
+    global $uploadby;
+    global $file_excel;
+    require_once 'SimpleXLSX.php';
+
+    if ($xlsx = SimpleXLSX::parse($fname)) {
+        $arr = $xlsx->rows();
+        $n = count($arr);
+
+        // Kosongkan tabel staging
+        odbc_exec($myconn, "TRUNCATE TABLE ztemp_tampungdata") or die(odbc_errormsg($myconn));
+
+        for ($i = 1; $i < $n; $i++) {
+            $polnum     = trim($arr[$i][0]);
+            $role       = trim($arr[$i][1]);
+            $clientname = trim($arr[$i][2]);
+            $birthdate  = trim($arr[$i][3]);
+            $gender     = trim($arr[$i][4]);
+            $identityno = trim($arr[$i][5]);
+            $address    = trim($arr[$i][6]);
+            $mobilenum  = trim($arr[$i][7]);
+
+            // Hanya insert jika polnum tidak kosong
+            if ($polnum != "") {
+                $sql = "INSERT INTO ztemp_tampungdata (polnum, role, clientname, birthdate, gender, identityno, address, mobilenum)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                $params = array($polnum, $role, $clientname, $birthdate, $gender, $identityno, $address, $mobilenum);
+                $stmt = odbc_prepare($myconn, $sql);
+                odbc_execute($stmt, $params);
+            }
+        }
+
+        // Jalankan SP validasi
+        $res = odbc_exec($myconn, "EXEC sp_validasi_uploaddata");
+        if (!$res) {
+            $error = odbc_errormsg($myconn);
+            die("<h3>UPLOAD GAGAL: $error</h3>");
+        }
+
+        // Lanjut insert ke data clean
+        $res2 = odbc_exec($myconn, "EXEC sp_insert_to_data_clean");
+        if (!$res2) {
+            $error = odbc_errormsg($myconn);
+            die("<h3>UPLOAD GAGAL SAAT CLEANING: $error</h3>");
+        }
+
+        // Jalankan finalisasi policy-role
+        $res3 = odbc_exec($myconn, "EXEC sp_update_temp_lfpolicyrole_final");
+        if (!$res3) {
+            $error = odbc_errormsg($myconn);
+            die("<h3>UPLOAD GAGAL SAAT FINAL POLICY ROLE: $error</h3>");
+        }
+
+        print("<h3>UPLOAD SUCCESS !!!</h3>");
+    } else {
+        echo SimpleXLSX::parseError();
+    }
+}
+?>
