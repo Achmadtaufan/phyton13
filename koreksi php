@@ -1,0 +1,91 @@
+<?php
+include("inc_err.php");
+include("server_dwh.php");
+include("lib.php");
+session_start();
+include("auth.php");
+
+set_time_limit(60*10);
+$uploadby = $_SESSION["reporttools_userid"];
+$file_excel = $_FILES["file_excel"]["name"];
+
+if ($_FILES["file_excel"]["error"] == 0) {
+    $file_excel_tmp = $_FILES["file_excel"]["tmp_name"];
+    move_uploaded_file($file_excel_tmp, "uploads/$file_excel");
+    save_to_db("uploads/$file_excel");
+}
+
+function save_to_db($fname)
+{
+    global $myconn;
+    global $uploadby;
+    global $file_excel;
+    require_once 'SimpleXLSX.php';
+
+    if ($xlsx = SimpleXLSX::parse($fname)) {
+        $arr = $xlsx->rows();
+        $n = count($arr);
+
+        // Kosongkan tabel staging
+        odbc_exec($myconn, "TRUNCATE TABLE STG.DBO.ZTEMP_NSS_PHENTITY") or die(odbc_errormsg($myconn));
+
+        for ($i = 1; $i < $n; $i++) {
+            $Policy_Number				= trim($arr[$i][0]);
+			$Role						= trim($arr[$i][1]);
+			$Client_Name				= trim($arr[$i][2]);
+			$Birth_Date					= trim($arr[$i][3]);
+			$Gender						= trim($arr[$i][4]);
+			$Mobile_No					= trim($arr[$i][5]);
+			$Phone_No					= trim($arr[$i][6]);
+			$Phone_No_Work				= trim($arr[$i][7]);
+			$Identification_Number		= trim($arr[$i][8]);
+			$Address_Residence_line_1	= trim($arr[$i][9]);
+			$Address_Residence_line_2	= trim($arr[$i][10]);
+			$Address_Residence_line_3	= trim($arr[$i][11]);
+			$Address_Residence_line_4	= trim($arr[$i][12]);
+			$Address_Residence_line_5	= trim($arr[$i][13]);
+			$postCode					= trim($arr[$i][14]);
+			$Country_Residence			= trim($arr[$i][15]);
+			$Nationality				= trim($arr[$i][16]);
+			$Occupation_Code			= trim($arr[$i][17]);
+			$System						= trim($arr[$i][18]);
+			$SystemUpdate_Date			= trim($arr[$i][19]);
+			$Created_BY					= trim($arr[$i][20]);
+
+            // Hanya insert jika polnum tidak kosong
+            if ($Policy_Number != "") {
+                $sql = "INSERT INTO STG.DBO.ZTEMP_NSS_PHENTITY (Policy_Number,Role,Client_Name,,Gender,Mobile_No,Phone_No,Phone_No_Work,Identification_Number,Address_Residence_line_1,Address_Residence_line_2,Address_Residence_line_3,Address_Residence_line_4,Address_Residence_line_5,postCode,Country_Residence,Nationality,Occupation_Code,System,SystemUpdate_Date,Created_BY)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+                $params = array($Policy_Number,$Role,$Client_Name,$Birth_Date,$Gender,$Mobile_No,$Phone_No,$Phone_No_Work,$Identification_Number,$Address_Residence_line_1,$Address_Residence_line_2,$Address_Residence_line_3,$Address_Residence_line_4,$Address_Residence_line_5,$postCode,$Country_Residence,$Nationality,$Occupation_Code,$System,$SystemUpdate_Date,$Created_BY);
+                $stmt = odbc_prepare($myconn, $sql);
+                odbc_execute($stmt, $params);
+            }
+        }
+
+        // Jalankan SP validasi
+        $res = odbc_exec($myconn, "EXEC SP_VALIDASI_UPLOADDATA_NSS_PHENTITY");
+        if (!$res) {
+            $error = odbc_errormsg($myconn);
+            die("<h3>UPLOAD GAGAL SAAT MENJALANKAN SP_VALIDASI_UPLOADDATA_NSS_PHENTITY: $error</h3>");
+        }
+
+        // Lanjut insert ke data clean
+        $res2 = odbc_exec($myconn, "EXEC SP_INSERT_DATA_NSS_PHENTITY");
+        if (!$res2) {
+            $error = odbc_errormsg($myconn);
+            die("<h3>UPLOAD GAGAL SAAT MENJALANKAN SP_INSERT_DATA_NSS_PHENTITY: $error</h3>");
+        }
+
+        // Jalankan finalisasi policy-role
+        $res3 = odbc_exec($myconn, "EXEC SP_UPSERT_STG_LF_POLICYROLE_ENTITY");
+        if (!$res3) {
+            $error = odbc_errormsg($myconn);
+            die("<h3>UPLOAD GAGAL SAAT SP_UPSERT_STG_LF_POLICYROLE_ENTITY: $error</h3>");
+        }
+
+        print("<h3>UPLOAD SUCCESS !!!</h3>");
+    } else {
+        echo SimpleXLSX::parseError();
+    }
+}
+?>
