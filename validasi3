@@ -1,0 +1,124 @@
+<?php
+include("inc_err.php");
+include("server_dwh.php");
+include("lib.php");
+session_start();
+include("auth.php");
+
+set_time_limit(60 * 10);
+$uploadby = $_SESSION["reporttools_userid"];
+
+if (isset($_FILES["file_excel"]) && $_FILES["file_excel"]["error"] == 0) {
+    $file_excel = htmlspecialchars($_FILES["file_excel"]["name"]);
+    $file_excel_tmp = $_FILES["file_excel"]["tmp_name"];
+    if (move_uploaded_file($file_excel_tmp, "uploads/$file_excel")) {
+        save_to_db("uploads/$file_excel");
+    } else {
+        die("<h3>UPLOAD FAILED</h3><p>Gagal memindahkan file.</p>");
+    }
+} else {
+    die("<h3>UPLOAD FAILED</h3><p>File belum dipilih atau terjadi kesalahan saat upload.</p>");
+}
+
+function save_to_db($fname)
+{
+    global $myconn;
+    global $uploadby;
+    global $file_excel;
+    require_once 'SimpleXLSX.php';
+
+    if ($xlsx = SimpleXLSX::parse($fname)) {
+        $arr = $xlsx->rows();
+        $n = count($arr);
+
+        // Kosongkan tabel staging
+        @odbc_exec($myconn, "TRUNCATE TABLE STG.DBO.ZTEMP_NSS_PHENTITY_UPLOAD") or die("<h3>UPLOAD FAILED</h3><p>Gagal truncate staging table.</p>");
+
+        for ($i = 1; $i < $n; $i++) {
+            $Policy_Number              = trim($arr[$i][0]);
+            $Role                       = trim($arr[$i][1]);
+            $Client_Name                = trim($arr[$i][2]);
+            $Birth_Date                 = trim($arr[$i][3]);
+            $Gender                     = trim($arr[$i][4]);
+            $Mobile_No                  = trim($arr[$i][5]);
+            $Phone_No                   = trim($arr[$i][6]);
+            $Phone_No_Work              = trim($arr[$i][7]);
+            $Identification_No          = trim($arr[$i][8]);
+            $Address_Residence_line_1   = trim($arr[$i][9]);
+            $Address_Residence_line_2   = trim($arr[$i][10]);
+            $Address_Residence_line_3   = trim($arr[$i][11]);
+            $Address_Residence_line_4   = trim($arr[$i][12]);
+            $Address_Residence_line_5   = trim($arr[$i][13]);
+            $postCode                   = trim($arr[$i][14]);
+            $Country_Residence          = trim($arr[$i][15]);
+            $Nationality                = trim($arr[$i][16]);
+            $Occupation_Code            = trim($arr[$i][17]);
+            $System                     = trim($arr[$i][18]);
+            $SystemUpdate_Date          = trim($arr[$i][19]);
+            $Created_BY                 = trim($arr[$i][20]);
+
+            $sql = "INSERT INTO STG.DBO.ZTEMP_NSS_PHENTITY_UPLOAD 
+                    (Policy_Number, Role, Client_Name, Birth_Date, Gender, Mobile_No, Phone_No, Phone_No_Work, 
+                    Identification_No, Address_Residence_line_1, Address_Residence_line_2, Address_Residence_line_3, 
+                    Address_Residence_line_4, Address_Residence_line_5, postCode, Country_Residence, Nationality, 
+                    Occupation_Code, System, SystemUpdate_Date, Created_BY)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ReportTools',GETDATE(),'$uploadby')";
+
+            $params = array(
+                $Policy_Number, $Role, $Client_Name, $Birth_Date, $Gender, $Mobile_No,
+                $Phone_No, $Phone_No_Work, $Identification_No, $Address_Residence_line_1,
+                $Address_Residence_line_2, $Address_Residence_line_3, $Address_Residence_line_4,
+                $Address_Residence_line_5, $postCode, $Country_Residence, $Nationality,
+                $Occupation_Code, $System, $SystemUpdate_Date, $Created_BY
+            );
+
+            $stmt = @odbc_prepare($myconn, $sql);
+            if (!$stmt || !@odbc_execute($stmt, $params)) {
+                die("<h3>UPLOAD FAILED</h3><p>Error insert ke staging.</p>");
+            }
+        }
+
+        // Jalankan SP Validasi
+        $res = @odbc_exec($myconn, "EXEC SP_VALIDASI_UPLOADDATA_NSS_PHENTITY");
+        $errorMessages = [];
+        if ($res) {
+            while (odbc_fetch_row($res)) {
+                $msg = trim(odbc_result($res, 1));
+                if ($msg !== '') {
+                    $errorMessages[] = $msg;
+                }
+            }
+        }
+
+        if (count($errorMessages) > 0) {
+            echo "<h3>UPLOAD FAILED</h3>";
+            foreach ($errorMessages as $msg) {
+                echo "<p>" . htmlspecialchars($msg) . "</p>";
+            }
+            return; // Stop proses di sini
+        }
+
+        // Jika validasi lolos, lanjut ke proses berikutnya
+        if (!@odbc_exec($myconn, "EXEC SP_INSERT_DATA_NSS_PHENTITY")) {
+            die("<h3>UPLOAD FAILED</h3><p>Error insert ke data clean.</p>");
+        }
+
+        if (!@odbc_exec($myconn, "EXEC SP_DELETE_INSERT_STG_LF_POLICYROLE_ENTITY")) {
+            die("<h3>UPLOAD FAILED</h3><p>Error finalisasi policy-role.</p>");
+        }
+
+        // Log upload
+        $res4 = "INSERT INTO LOG_UPLOAD_REPORT 
+                 VALUES ('PH Entity Stakeholder Upload','FCRM','$uploadby',
+                 (SELECT COUNT(*) FROM STG.DBO.ZTEMP_NSS_PHENTITY_UPLOAD),
+                 '$file_excel', GETDATE())";
+        if (!@odbc_exec($myconn, $res4)) {
+            die("<h3>UPLOAD FAILED</h3><p>Error mencatat log.</p>");
+        }
+
+        echo "<h3>UPLOAD SUCCESS !!!</h3>";
+    } else {
+        echo "<h3>UPLOAD FAILED</h3><p>" . SimpleXLSX::parseError() . "</p>";
+    }
+}
+?>
