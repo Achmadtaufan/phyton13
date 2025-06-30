@@ -1,17 +1,18 @@
--- Persiapan: ambil semua nama linked server ke data_source yang dimaksud
+-- Step 1: Ambil semua nama linked server yang mengarah ke target data_source
 DECLARE @LinkedServers TABLE (LinkedServerName SYSNAME);
 INSERT INTO @LinkedServers
-SELECT name FROM sys.servers
+SELECT name 
+FROM sys.servers
 WHERE data_source = 'rds-shin.rdws.amazonaws.com';
 
 -- Variabel untuk dynamic SQL
 DECLARE @DBName SYSNAME;
 DECLARE @SQL NVARCHAR(MAX) = N'';
-DECLARE @LinkedServer SYSNAME;
 
--- Cursor untuk loop semua database (exclude system db)
+-- Cursor untuk loop semua user database (kecuali sistem)
 DECLARE db_cursor CURSOR FOR
-SELECT name FROM sys.databases 
+SELECT name 
+FROM sys.databases 
 WHERE state_desc = 'ONLINE' 
 AND name NOT IN ('master', 'tempdb', 'model', 'msdb');
 
@@ -20,37 +21,35 @@ FETCH NEXT FROM db_cursor INTO @DBName;
 
 WHILE @@FETCH_STATUS = 0
 BEGIN
-    -- Bangun bagian query per DB
     DECLARE @InnerSQL NVARCHAR(MAX) = '';
     
     SELECT @InnerSQL = @InnerSQL + '
-    SELECT 
+    SELECT DISTINCT
         ''' + @DBName + ''' AS db_name,
         s.name AS schema_name,
         o.name AS object_name,
         o.type_desc AS object_type,
-        ''' + ls.LinkedServerName + ''' AS linked_server_name,
-        m.definition
+        ''' + ls.LinkedServerName + ''' AS linked_server_name
     FROM [' + @DBName + '].sys.sql_modules m
     JOIN [' + @DBName + '].sys.objects o ON m.object_id = o.object_id
     JOIN [' + @DBName + '].sys.schemas s ON o.schema_id = s.schema_id
     WHERE m.definition LIKE ''%' + QUOTENAME(ls.LinkedServerName) + '%''
     UNION ALL
     '
-    FROM @LinkedServers ls
+    FROM @LinkedServers ls;
 
-    -- Hilangkan UNION terakhir
-    IF RIGHT(@InnerSQL, 10) = 'UNION ALL ' 
+    -- Hapus UNION ALL terakhir
+    IF RIGHT(@InnerSQL, 10) = 'UNION ALL '
         SET @InnerSQL = LEFT(@InnerSQL, LEN(@InnerSQL) - 10);
 
-    -- Gabungkan ke SQL utama
+    -- Gabungkan hasil ke query utama
     SET @SQL = @SQL + @InnerSQL + CHAR(13) + CHAR(10);
 
     FETCH NEXT FROM db_cursor INTO @DBName;
 END
+
 CLOSE db_cursor;
 DEALLOCATE db_cursor;
 
--- Jalankan hasil akhir
--- Untuk debug, bisa PRINT @SQL dulu
+-- Eksekusi query gabungan
 EXEC sp_executesql @SQL;
