@@ -22,7 +22,8 @@ FETCH NEXT FROM db_cursor INTO @DBName;
 WHILE @@FETCH_STATUS = 0
 BEGIN
     DECLARE @InnerSQL NVARCHAR(MAX) = '';
-    
+
+    -- Bangun query untuk tiap linked server di DB aktif
     SELECT @InnerSQL = @InnerSQL + '
     SELECT DISTINCT
         ''' + @DBName + ''' AS db_name,
@@ -38,12 +39,15 @@ BEGIN
     '
     FROM @LinkedServers ls;
 
-    -- Hapus UNION ALL terakhir
-    IF RIGHT(@InnerSQL, 10) = 'UNION ALL '
-        SET @InnerSQL = LEFT(@InnerSQL, LEN(@InnerSQL) - 10);
+    -- Jika hasil InnerSQL tidak kosong, hapus UNION terakhir dan tambahkan ke SQL utama
+    IF LEN(@InnerSQL) > 0
+    BEGIN
+        -- Hilangkan UNION ALL terakhir
+        IF RIGHT(@InnerSQL, 10) = 'UNION ALL '
+            SET @InnerSQL = LEFT(@InnerSQL, LEN(@InnerSQL) - 10);
 
-    -- Gabungkan hasil ke query utama
-    SET @SQL = @SQL + @InnerSQL + CHAR(13) + CHAR(10);
+        SET @SQL = @SQL + @InnerSQL + CHAR(13) + CHAR(10);
+    END
 
     FETCH NEXT FROM db_cursor INTO @DBName;
 END
@@ -51,5 +55,8 @@ END
 CLOSE db_cursor;
 DEALLOCATE db_cursor;
 
--- Eksekusi query gabungan
-EXEC sp_executesql @SQL;
+-- Jalankan SQL gabungan
+IF LEN(@SQL) > 0
+    EXEC sp_executesql @SQL;
+ELSE
+    PRINT 'No linked server usage found in any database.';
