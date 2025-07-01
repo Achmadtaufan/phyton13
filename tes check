@@ -1,0 +1,35 @@
+DECLARE @linked_server_name NVARCHAR(128);
+
+-- Ambil nama linked server dari data_source
+SELECT @linked_server_name = name 
+FROM sys.servers 
+WHERE data_source = 'rds-idn.amazoncom';
+
+IF @linked_server_name IS NOT NULL
+BEGIN
+    DECLARE @sql NVARCHAR(MAX) = '';
+
+    -- Loop seluruh database user (skip system dbs)
+    SELECT @sql += '
+    USE [' + name + '];
+    SELECT 
+        ''' + name + ''' AS database_name,
+        ''' + @linked_server_name + ''' AS linked_server_name,
+        o.name AS object_name,
+        o.type_desc AS object_type,
+        m.definition AS object_definition
+    FROM sys.sql_modules m
+    JOIN sys.objects o ON m.object_id = o.object_id
+    WHERE 
+        o.type IN (''V'', ''P'', ''FN'', ''TF'', ''IF'')
+        AND m.definition LIKE ''%' + @linked_server_name + '%'';' + CHAR(13)
+    FROM sys.databases
+    WHERE database_id > 4 AND state = 0;
+
+    -- Jalankan hasil loop sebagai dynamic SQL
+    EXEC sp_executesql @sql;
+END
+ELSE
+BEGIN
+    PRINT 'Tidak ditemukan linked server dengan data_source = rds-idn.amazoncom';
+END
