@@ -1,0 +1,14 @@
+SELECT 
+    placeofbirth AS original_placeofbirth,
+    CAST(
+        (
+            SELECT '' + SUBSTRING(placeofbirth, v.number, 1)
+            FROM master..spt_values v
+            WHERE v.type = 'P'
+              AND v.number BETWEEN 1 AND LEN(placeofbirth)
+              AND UNICODE(SUBSTRING(placeofbirth, v.number, 1)) BETWEEN 32 AND 126
+            ORDER BY v.number
+            FOR XML PATH(''), TYPE
+        ).value('.', 'nvarchar(max)') AS VARCHAR(255)
+    ) AS cleaned_placeofbirth
+FROM ztemp_test;
