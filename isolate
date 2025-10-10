@@ -1,0 +1,4 @@
+SELECT placeofbirth,
+       sys.fn_varbintohexstr(CAST(placeofbirth AS VARBINARY(MAX))) AS hex_value
+FROM ztemp_test
+WHERE LEN(placeofbirth) <> DATALENGTH(placeofbirth) -- tanda ada byte non-standar
