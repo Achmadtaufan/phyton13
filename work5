@@ -1,29 +1,11 @@
-;WITH CTE AS
+;WITH Q AS
 (
     SELECT
         menuName,
-        queryText =
-            CAST([query] AS VARCHAR(MAX))
+        CAST([query] AS VARCHAR(MAX)) AS queryText
     FROM comp
 ),
-CleanQuery AS
-(
-    SELECT
-        menuName,
-        queryText =
-            REPLACE(
-                REPLACE(
-                    REPLACE(
-                        REPLACE(queryText, CHAR(13), ' '),
-                        CHAR(10), ' '
-                    ),
-                    CHAR(9), ' '
-                ),
-                '  ', ' '
-            )
-    FROM CTE
-),
-CleanQuery2 AS
+N AS
 (
     SELECT
         menuName,
@@ -36,26 +18,35 @@ CleanQuery2 AS
                                 REPLACE(
                                     REPLACE(
                                         REPLACE(
-                                            queryText COLLATE Latin1_General_CI_AS,
-                                            ' LEFT OUTER JOIN ', ' FROM '
+                                            REPLACE(
+                                                REPLACE(
+                                                    REPLACE(
+                                                        queryText,
+                                                        CHAR(13), ' '
+                                                    ),
+                                                    CHAR(10), ' '
+                                                ),
+                                                CHAR(9), ' '
+                                            ),
+                                            ' LEFT OUTER JOIN ', CHAR(30)
                                         ),
-                                        ' RIGHT OUTER JOIN ', ' FROM '
+                                        ' RIGHT OUTER JOIN ', CHAR(30)
                                     ),
-                                    ' FULL OUTER JOIN ', ' FROM '
+                                    ' FULL OUTER JOIN ', CHAR(30)
                                 ),
-                                ' LEFT JOIN ', ' FROM '
+                                ' LEFT JOIN ', CHAR(30)
                             ),
-                            ' RIGHT JOIN ', ' FROM '
+                            ' RIGHT JOIN ', CHAR(30)
                         ),
-                        ' INNER JOIN ', ' FROM '
+                        ' INNER JOIN ', CHAR(30)
                     ),
-                    ' FULL JOIN ', ' FROM '
+                    ' FULL JOIN ', CHAR(30)
                 ),
-                ' CROSS JOIN ', ' FROM '
+                ' CROSS JOIN ', CHAR(30)
             )
-    FROM CleanQuery
+    FROM Q
 ),
-CleanQuery3 AS
+N2 AS
 (
     SELECT
         menuName,
@@ -64,100 +55,93 @@ CleanQuery3 AS
                 REPLACE(
                     REPLACE(
                         queryText,
-                        ' OUTER APPLY ', ' FROM '
+                        ' OUTER APPLY ', CHAR(30)
                     ),
-                    ' CROSS APPLY ', ' FROM '
+                    ' CROSS APPLY ', CHAR(30)
                 ),
-                ' JOIN ', ' FROM '
+                ' JOIN ', CHAR(30)
             )
-    FROM CleanQuery2
+    FROM N
 ),
-SplitData AS
+N3 AS
 (
     SELECT
         menuName,
-        LTRIM(RTRIM(value)) AS part
-    FROM CleanQuery3
-    CROSS APPLY STRING_SPLIT(queryText, ' FROM ')
+        queryText =
+            REPLACE(
+                queryText,
+                ' FROM ',
+                CHAR(30)
+            )
+    FROM N2
 ),
-ObjectData AS
+S AS
+(
+    SELECT
+        menuName,
+        part = LTRIM(RTRIM(value))
+    FROM N3
+    CROSS APPLY STRING_SPLIT(queryText, CHAR(30))
+),
+O AS
 (
     SELECT
         menuName,
         objectRaw =
             CASE
-                WHEN CHARINDEX(' ', part + ' ') > 0
-                THEN LEFT(
-                    part,
-                    CHARINDEX(' ', part + ' ') - 1
-                )
-                ELSE part
+                WHEN LEFT(part, 1) = '(' THEN NULL
+                ELSE
+                    LEFT(
+                        part,
+                        CHARINDEX(' ', part + ' ') - 1
+                    )
             END
-    FROM SplitData
-    WHERE LTRIM(RTRIM(part)) <> ''
+    FROM S
 ),
-CleanObject AS
+O2 AS
 (
     SELECT
         menuName,
         objectRaw =
             CASE
+                WHEN objectRaw IS NULL THEN NULL
                 WHEN CHARINDEX('(', objectRaw) > 0
-                THEN LEFT(
-                    objectRaw,
-                    CHARINDEX('(', objectRaw) - 1
-                )
+                    THEN LEFT(
+                        objectRaw,
+                        CHARINDEX('(', objectRaw) - 1
+                    )
                 ELSE objectRaw
             END
-    FROM ObjectData
-),
-FinalData AS
-(
-    SELECT
-        menuName,
-        objectName =
-            CASE
-                WHEN CHARINDEX(
-                    '.',
-                    REPLACE(
-                        REPLACE(objectRaw, '[', ''),
-                        ']',
-                        ''
-                    )
-                ) > 0
-                THEN RIGHT(
-                    REPLACE(
-                        REPLACE(objectRaw, '[', ''),
-                        ']',
-                        ''
-                    ),
-                    CHARINDEX(
-                        '.',
-                        REVERSE(
-                            REPLACE(
-                                REPLACE(objectRaw, '[', ''),
-                                ']',
-                                ''
-                            )
-                        )
-                    ) - 1
-                )
-                ELSE
-                    REPLACE(
-                        REPLACE(objectRaw, '[', ''),
-                        ']',
-                        ''
-                    )
-            END
-    FROM CleanObject
+    FROM O
 )
 SELECT DISTINCT
     menuName,
-    objectName
-FROM FinalData
-WHERE NULLIF(LTRIM(RTRIM(objectName)), '') IS NOT NULL
-  AND LTRIM(RTRIM(objectName)) <> '('
-  AND UPPER(LTRIM(RTRIM(objectName))) <> 'SELECT'
+    objectName =
+        CASE
+            WHEN CHARINDEX('.', cleanedObject) > 0
+                THEN RIGHT(
+                    cleanedObject,
+                    CHARINDEX('.', REVERSE(cleanedObject)) - 1
+                )
+            ELSE cleanedObject
+        END
+FROM
+(
+    SELECT
+        menuName,
+        cleanedObject =
+            REPLACE(
+                REPLACE(
+                    LTRIM(RTRIM(objectRaw)),
+                    '[', ''
+                ),
+                ']', ''
+            )
+    FROM O2
+    WHERE objectRaw IS NOT NULL
+) X
+WHERE NULLIF(cleanedObject, '') IS NOT NULL
+  AND UPPER(cleanedObject) <> 'SELECT'
 ORDER BY
     menuName,
     objectName;
