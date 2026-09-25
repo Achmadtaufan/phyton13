@@ -1,0 +1,113 @@
+;WITH CTE AS
+(
+    SELECT
+        menuName,
+        CAST([query] AS VARCHAR(MAX)) AS queryText
+    FROM comp
+),
+CleanQuery AS
+(
+    SELECT
+        menuName,
+        queryText =
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            REPLACE(
+                                REPLACE(
+                                    REPLACE(
+                                        REPLACE(
+                                            UPPER(queryText),
+                                            CHAR(13), ' '
+                                        ),
+                                        CHAR(10), ' '
+                                    ),
+                                    CHAR(9), ' '
+                                ),
+                                '(', ' ( '
+                            ),
+                            ')', ' ) '
+                        ),
+                        ',', ' , '
+                    ),
+                    ';', ' ; '
+                ),
+                '.', ' . '
+            )
+    FROM CTE
+),
+Tokens AS
+(
+    SELECT
+        c.menuName,
+        TokenNo =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY c.menuName
+                ORDER BY (SELECT NULL)
+            ),
+        Token =
+            LTRIM(RTRIM(x.n.value('.', 'VARCHAR(500)')))
+    FROM CleanQuery c
+    CROSS APPLY
+    (
+        SELECT CAST(
+            '<x>' +
+            REPLACE(
+                LTRIM(RTRIM(c.queryText)),
+                ' ',
+                '</x><x>'
+            ) +
+            '</x>' AS XML
+        ) AS XmlData
+    ) d
+    CROSS APPLY d.XmlData.nodes('/x') x(n)
+),
+KeywordToken AS
+(
+    SELECT
+        t.menuName,
+        t.TokenNo,
+        t.Token,
+        NextToken =
+            LEAD(t.Token, 1) OVER
+            (
+                PARTITION BY t.menuName
+                ORDER BY t.TokenNo
+            )
+    FROM Tokens t
+)
+SELECT DISTINCT
+    menuName,
+    objectName =
+        CASE
+            WHEN NextToken = '('
+                THEN NULL
+            WHEN NextToken LIKE '%.%'
+                THEN PARSENAME(
+                    REPLACE(
+                        REPLACE(NextToken, '[', ''),
+                        ']', ''
+                    ),
+                    1
+                )
+            ELSE
+                REPLACE(
+                    REPLACE(NextToken, '[', ''),
+                    ']',
+                    ''
+                )
+        END
+FROM KeywordToken
+WHERE
+       Token IN
+       (
+           'FROM',
+           'JOIN'
+       )
+    OR Token LIKE '%JOIN'
+    AND NextToken <> '('
+ORDER BY
+    menuName,
+    objectName;
