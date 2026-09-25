@@ -1,0 +1,163 @@
+;WITH CTE AS
+(
+    SELECT
+        menuName,
+        queryText =
+            CAST([query] AS VARCHAR(MAX))
+    FROM comp
+),
+CleanQuery AS
+(
+    SELECT
+        menuName,
+        queryText =
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(queryText, CHAR(13), ' '),
+                        CHAR(10), ' '
+                    ),
+                    CHAR(9), ' '
+                ),
+                '  ', ' '
+            )
+    FROM CTE
+),
+CleanQuery2 AS
+(
+    SELECT
+        menuName,
+        queryText =
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            REPLACE(
+                                REPLACE(
+                                    REPLACE(
+                                        REPLACE(
+                                            queryText COLLATE Latin1_General_CI_AS,
+                                            ' LEFT OUTER JOIN ', ' FROM '
+                                        ),
+                                        ' RIGHT OUTER JOIN ', ' FROM '
+                                    ),
+                                    ' FULL OUTER JOIN ', ' FROM '
+                                ),
+                                ' LEFT JOIN ', ' FROM '
+                            ),
+                            ' RIGHT JOIN ', ' FROM '
+                        ),
+                        ' INNER JOIN ', ' FROM '
+                    ),
+                    ' FULL JOIN ', ' FROM '
+                ),
+                ' CROSS JOIN ', ' FROM '
+            )
+    FROM CleanQuery
+),
+CleanQuery3 AS
+(
+    SELECT
+        menuName,
+        queryText =
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        queryText,
+                        ' OUTER APPLY ', ' FROM '
+                    ),
+                    ' CROSS APPLY ', ' FROM '
+                ),
+                ' JOIN ', ' FROM '
+            )
+    FROM CleanQuery2
+),
+SplitData AS
+(
+    SELECT
+        menuName,
+        LTRIM(RTRIM(value)) AS part
+    FROM CleanQuery3
+    CROSS APPLY STRING_SPLIT(queryText, ' FROM ')
+),
+ObjectData AS
+(
+    SELECT
+        menuName,
+        objectRaw =
+            CASE
+                WHEN CHARINDEX(' ', part + ' ') > 0
+                THEN LEFT(
+                    part,
+                    CHARINDEX(' ', part + ' ') - 1
+                )
+                ELSE part
+            END
+    FROM SplitData
+    WHERE LTRIM(RTRIM(part)) <> ''
+),
+CleanObject AS
+(
+    SELECT
+        menuName,
+        objectRaw =
+            CASE
+                WHEN CHARINDEX('(', objectRaw) > 0
+                THEN LEFT(
+                    objectRaw,
+                    CHARINDEX('(', objectRaw) - 1
+                )
+                ELSE objectRaw
+            END
+    FROM ObjectData
+),
+FinalData AS
+(
+    SELECT
+        menuName,
+        objectName =
+            CASE
+                WHEN CHARINDEX(
+                    '.',
+                    REPLACE(
+                        REPLACE(objectRaw, '[', ''),
+                        ']',
+                        ''
+                    )
+                ) > 0
+                THEN RIGHT(
+                    REPLACE(
+                        REPLACE(objectRaw, '[', ''),
+                        ']',
+                        ''
+                    ),
+                    CHARINDEX(
+                        '.',
+                        REVERSE(
+                            REPLACE(
+                                REPLACE(objectRaw, '[', ''),
+                                ']',
+                                ''
+                            )
+                        )
+                    ) - 1
+                )
+                ELSE
+                    REPLACE(
+                        REPLACE(objectRaw, '[', ''),
+                        ']',
+                        ''
+                    )
+            END
+    FROM CleanObject
+)
+SELECT DISTINCT
+    menuName,
+    objectName
+FROM FinalData
+WHERE NULLIF(LTRIM(RTRIM(objectName)), '') IS NOT NULL
+  AND LTRIM(RTRIM(objectName)) <> '('
+  AND UPPER(LTRIM(RTRIM(objectName))) <> 'SELECT'
+ORDER BY
+    menuName,
+    objectName;
