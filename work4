@@ -1,0 +1,110 @@
+;WITH CTE AS
+(
+    SELECT
+        menuName,
+        CAST([query] AS VARCHAR(MAX)) AS queryText
+    FROM comp
+),
+Normalized AS
+(
+    SELECT
+        menuName,
+        queryText =
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            REPLACE(
+                                REPLACE(
+                                    REPLACE(
+                                        UPPER(queryText),
+                                        ' LEFT OUTER JOIN ', ' FROM '
+                                    ),
+                                    ' RIGHT OUTER JOIN ', ' FROM '
+                                ),
+                                ' FULL OUTER JOIN ', ' FROM '
+                            ),
+                            ' LEFT JOIN ', ' FROM '
+                        ),
+                        ' RIGHT JOIN ', ' FROM '
+                    ),
+                    ' INNER JOIN ', ' FROM '
+                )
+    FROM CTE
+),
+Normalized2 AS
+(
+    SELECT
+        menuName,
+        queryText =
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            queryText,
+                            ' FULL JOIN ', ' FROM '
+                        ),
+                        ' CROSS JOIN ', ' FROM '
+                    ),
+                    ' JOIN ', ' FROM '
+                ),
+                ' OUTER APPLY ', ' FROM '
+            )
+    FROM Normalized
+),
+SplitData AS
+(
+    SELECT
+        menuName,
+        LTRIM(RTRIM(value)) AS part
+    FROM Normalized2
+    CROSS APPLY STRING_SPLIT(queryText, ' FROM ')
+),
+ExtractObject AS
+(
+    SELECT
+        menuName,
+        objectRaw =
+            LTRIM(RTRIM(
+                LEFT(
+                    part,
+                    CHARINDEX(' ', part + ' ') - 1
+                )
+            ))
+    FROM SplitData
+    WHERE part <> ''
+),
+FinalData AS
+(
+    SELECT
+        menuName,
+        objectName =
+            CASE
+                WHEN objectRaw LIKE '%.%'
+                    THEN PARSENAME(
+                        REPLACE(
+                            REPLACE(objectRaw, '[', ''),
+                            ']',
+                            ''
+                        ),
+                        1
+                    )
+                ELSE
+                    REPLACE(
+                        REPLACE(objectRaw, '[', ''),
+                        ']',
+                        ''
+                    )
+            END
+    FROM ExtractObject
+)
+SELECT DISTINCT
+    menuName,
+    objectName
+FROM FinalData
+WHERE NULLIF(LTRIM(RTRIM(objectName)), '') IS NOT NULL
+  AND objectName <> '('
+  AND UPPER(REPLACE(LTRIM(RTRIM(objectName)), ' ', '')) <> '(SELECT'
+ORDER BY
+    menuName,
+    objectName;
