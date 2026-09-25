@@ -1,11 +1,34 @@
-;WITH Q AS
+;WITH SourceData AS
 (
     SELECT
         menuName,
-        CAST([query] AS VARCHAR(MAX)) AS queryText
+        queryText = CAST([query] AS VARCHAR(MAX))
     FROM comp
 ),
-N AS
+CleanData AS
+(
+    SELECT
+        menuName,
+        queryText =
+            REPLACE(
+                REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            REPLACE(
+                                queryText,
+                                CHAR(13), ' '
+                            ),
+                            CHAR(10), ' '
+                        ),
+                        CHAR(9), ' '
+                    ),
+                    '  ', ' '
+                ),
+                '  ', ' '
+            )
+    FROM SourceData
+),
+NormalizeJoin AS
 (
     SELECT
         menuName,
@@ -20,128 +43,152 @@ N AS
                                         REPLACE(
                                             REPLACE(
                                                 REPLACE(
-                                                    REPLACE(
-                                                        queryText,
-                                                        CHAR(13), ' '
-                                                    ),
-                                                    CHAR(10), ' '
+                                                    UPPER(queryText) COLLATE Latin1_General_CI_AS,
+                                                    ' LEFT OUTER JOIN ', '|'
                                                 ),
-                                                CHAR(9), ' '
+                                                ' RIGHT OUTER JOIN ', '|'
                                             ),
-                                            ' LEFT OUTER JOIN ', CHAR(30)
+                                            ' FULL OUTER JOIN ', '|'
                                         ),
-                                        ' RIGHT OUTER JOIN ', CHAR(30)
+                                        ' LEFT JOIN ', '|'
                                     ),
-                                    ' FULL OUTER JOIN ', CHAR(30)
+                                    ' RIGHT JOIN ', '|'
                                 ),
-                                ' LEFT JOIN ', CHAR(30)
+                                ' INNER JOIN ', '|'
                             ),
-                            ' RIGHT JOIN ', CHAR(30)
+                            ' FULL JOIN ', '|'
                         ),
-                        ' INNER JOIN ', CHAR(30)
+                        ' CROSS JOIN ', '|'
                     ),
-                    ' FULL JOIN ', CHAR(30)
+                    ' OUTER APPLY ', '|'
                 ),
-                ' CROSS JOIN ', CHAR(30)
+                ' CROSS APPLY ', '|'
             )
-    FROM Q
+    FROM CleanData
 ),
-N2 AS
+NormalizeAll AS
 (
     SELECT
         menuName,
         queryText =
             REPLACE(
                 REPLACE(
-                    REPLACE(
-                        queryText,
-                        ' OUTER APPLY ', CHAR(30)
-                    ),
-                    ' CROSS APPLY ', CHAR(30)
+                    queryText,
+                    ' JOIN ', '|'
                 ),
-                ' JOIN ', CHAR(30)
+                ' FROM ', '|'
             )
-    FROM N
+    FROM NormalizeJoin
 ),
-N3 AS
+FindObjects AS
 (
+    -- Ambil object pertama setelah FROM/JOIN
     SELECT
         menuName,
-        queryText =
-            REPLACE(
-                queryText,
-                ' FROM ',
-                CHAR(30)
+        queryText,
+        StartPos = 1,
+        EndPos =
+            CHARINDEX('|', queryText + '|')
+    FROM NormalizeAll
+
+    UNION ALL
+
+    -- Cari FROM/JOIN berikutnya
+    SELECT
+        menuName,
+        queryText,
+        StartPos = EndPos + 1,
+        EndPos =
+            CHARINDEX(
+                '|',
+                queryText + '|',
+                EndPos + 1
             )
-    FROM N2
+    FROM FindObjects
+    WHERE EndPos > 0
 ),
-S AS
+Parts AS
 (
     SELECT
         menuName,
-        part = LTRIM(RTRIM(value))
-    FROM N3
-    CROSS APPLY STRING_SPLIT(queryText, CHAR(30))
+        part =
+            LTRIM(
+                RTRIM(
+                    SUBSTRING(
+                        queryText,
+                        StartPos,
+                        EndPos - StartPos
+                    )
+                )
+            )
+    FROM FindObjects
+    WHERE EndPos > StartPos
 ),
-O AS
+FirstToken AS
 (
     SELECT
         menuName,
-        objectRaw =
+        token =
             CASE
-                WHEN LEFT(part, 1) = '(' THEN NULL
+                WHEN LEFT(part, 1) = '('
+                    THEN NULL
                 ELSE
                     LEFT(
                         part,
                         CHARINDEX(' ', part + ' ') - 1
                     )
             END
-    FROM S
+    FROM Parts
 ),
-O2 AS
+CleanObject AS
 (
     SELECT
         menuName,
-        objectRaw =
+        objectName =
             CASE
-                WHEN objectRaw IS NULL THEN NULL
-                WHEN CHARINDEX('(', objectRaw) > 0
+                WHEN token IS NULL THEN NULL
+
+                -- Function: dbo.fn_test(...) 
+                WHEN CHARINDEX('(', token) > 0
                     THEN LEFT(
-                        objectRaw,
-                        CHARINDEX('(', objectRaw) - 1
+                        token,
+                        CHARINDEX('(', token) - 1
                     )
-                ELSE objectRaw
+
+                ELSE token
             END
-    FROM O
+    FROM FirstToken
 )
 SELECT DISTINCT
     menuName,
     objectName =
         CASE
-            WHEN CHARINDEX('.', cleanedObject) > 0
+            WHEN CHARINDEX('.', objectClean) > 0
                 THEN RIGHT(
-                    cleanedObject,
-                    CHARINDEX('.', REVERSE(cleanedObject)) - 1
+                    objectClean,
+                    CHARINDEX(
+                        '.',
+                        REVERSE(objectClean)
+                    ) - 1
                 )
-            ELSE cleanedObject
+            ELSE objectClean
         END
 FROM
 (
     SELECT
         menuName,
-        cleanedObject =
+        objectClean =
             REPLACE(
                 REPLACE(
-                    LTRIM(RTRIM(objectRaw)),
+                    LTRIM(RTRIM(objectName)),
                     '[', ''
                 ),
                 ']', ''
             )
-    FROM O2
-    WHERE objectRaw IS NOT NULL
+    FROM CleanObject
+    WHERE objectName IS NOT NULL
 ) X
-WHERE NULLIF(cleanedObject, '') IS NOT NULL
-  AND UPPER(cleanedObject) <> 'SELECT'
-ORDER BY
-    menuName,
-    objectName;
+WHERE NULLIF(objectClean, '') IS NOT NULL
+  AND objectClean <> '('
+  AND UPPER(objectClean) <> 'SELECT'
+OPTION (MAXRECURSION 0);
