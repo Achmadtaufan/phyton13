@@ -1,0 +1,104 @@
+;WITH CTE AS
+(
+    SELECT
+        menuName,
+        CAST([query] AS VARCHAR(MAX)) AS queryText
+    FROM comp
+),
+Numbers AS
+(
+    SELECT TOP (10000)
+        ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS n
+    FROM sys.all_objects a
+    CROSS JOIN sys.all_objects b
+),
+Keywords AS
+(
+    SELECT ' FROM ' AS Keyword
+    UNION ALL SELECT ' LEFT JOIN '
+    UNION ALL SELECT ' RIGHT JOIN '
+    UNION ALL SELECT ' INNER JOIN '
+    UNION ALL SELECT ' FULL JOIN '
+    UNION ALL SELECT ' LEFT OUTER JOIN '
+    UNION ALL SELECT ' RIGHT OUTER JOIN '
+    UNION ALL SELECT ' FULL OUTER JOIN '
+    UNION ALL SELECT ' CROSS JOIN '
+    UNION ALL SELECT ' JOIN '
+),
+Found AS
+(
+    SELECT DISTINCT
+        c.menuName,
+        c.queryText,
+        n.n AS Position,
+        k.Keyword
+    FROM CTE c
+    CROSS JOIN Numbers n
+    CROSS JOIN Keywords k
+    WHERE n.n <= LEN(c.queryText)
+      AND SUBSTRING(
+            ' ' + UPPER(c.queryText) + ' ',
+            n.n,
+            LEN(k.Keyword)
+          ) = k.Keyword
+),
+ExtractObject AS
+(
+    SELECT
+        menuName,
+
+        objectRaw =
+            LTRIM(RTRIM(
+                LEFT(
+                    SUBSTRING(
+                        queryText,
+                        Position + LEN(Keyword),
+                        LEN(queryText)
+                    ),
+                    CHARINDEX(
+                        ' ',
+                        SUBSTRING(
+                            queryText,
+                            Position + LEN(Keyword),
+                            LEN(queryText)
+                        ) + ' '
+                    ) - 1
+                )
+            ))
+    FROM Found
+),
+FinalData AS
+(
+    SELECT
+        menuName,
+
+        objectName =
+            CASE
+                WHEN objectRaw LIKE '%.%'
+                    THEN PARSENAME(
+                        REPLACE(
+                            REPLACE(objectRaw, '[', ''),
+                            ']',
+                            ''
+                        ),
+                        1
+                    )
+                ELSE
+                    REPLACE(
+                        REPLACE(objectRaw, '[', ''),
+                        ']',
+                        ''
+                    )
+            END
+    FROM ExtractObject
+)
+SELECT DISTINCT
+    menuName,
+    objectName
+FROM FinalData
+WHERE NULLIF(LTRIM(RTRIM(objectName)), '') IS NOT NULL
+  AND objectName <> '('
+  AND UPPER(REPLACE(LTRIM(RTRIM(objectName)), ' ', '')) <> '(SELECT'
+ORDER BY
+    menuName,
+    objectName;
